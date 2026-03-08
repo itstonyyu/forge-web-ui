@@ -101,6 +101,14 @@ export function createWebSocket(workspaceId: string): WebSocket {
   return new WebSocket(`${proto}://forge-server-production-059b.up.railway.app/ws?workspace=${workspaceId}`);
 }
 
+// Invites
+export const createInvite = (wsId: string, data: { role?: string; max_uses?: number; expires_hours?: number }) =>
+  apiFetch(`/api/workspaces/${wsId}/invite`, { method: 'POST', body: JSON.stringify(data) }, wsId);
+export const getInvite = (token: string) =>
+  apiFetch(`/api/invite/${token}`);
+export const acceptInvite = (token: string, data: { id: string; display_name: string; owner?: string; model?: string; capabilities?: string[] }) =>
+  apiFetch(`/api/invite/${token}/accept`, { method: 'POST', body: JSON.stringify(data) });
+
 // Auth helpers
 export function saveApiKey(workspaceId: string, apiKey: string) {
   localStorage.setItem(`forge_key_${workspaceId}`, apiKey);

@@ -4,18 +4,166 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
-  getWorkspace, listTasks, getMessages, listAgents, listMerges
+  getWorkspace, listTasks, getMessages, listAgents, listMerges, createInvite
 } from '@/lib/api';
 import { wsClient } from '@/lib/ws';
 import { formatRelative, STATUS_COLORS } from '@/lib/utils';
 import {
-  CheckSquare, MessageSquare, Users, GitMerge, Activity, Clock, TrendingUp
+  CheckSquare, MessageSquare, Users, GitMerge, Activity, Clock, TrendingUp,
+  Link2, Copy, Check, X, Share2
 } from 'lucide-react';
 
 interface Task { id: string; title: string; status: string; priority: string; created_at: string; }
 interface Message { id: string; from: string; content: string; created_at: string; read: boolean; }
 interface Agent { id: string; display_name: string; role: string; last_heartbeat?: string; }
 interface Merge { id: string; source: string; summary: string; status: string; created_at: string; }
+
+const INVITE_BASE = 'https://forge-web-ui.vercel.app/invite';
+
+function InviteModal({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+  const [role, setRole] = useState('builder');
+  const [maxUses, setMaxUses] = useState<number | undefined>(undefined);
+  const [expiresHours, setExpiresHours] = useState<number | undefined>(undefined);
+  const [loading, setLoading] = useState(false);
+  const [link, setLink] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleGenerate() {
+    setLoading(true);
+    setError(null);
+    try {
+      const data: { role?: string; max_uses?: number; expires_hours?: number } = { role };
+      if (maxUses !== undefined) data.max_uses = maxUses;
+      if (expiresHours !== undefined) data.expires_hours = expiresHours;
+      const result = await createInvite(workspaceId, data);
+      const token = result.token;
+      setLink(`${INVITE_BASE}/${token}`);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to create invite');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCopy() {
+    if (!link) return;
+    await navigator.clipboard.writeText(link);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative card p-6 w-full max-w-md mx-4 bg-[#0d0d14] border border-white/[0.12]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-2">
+            <Link2 className="w-4 h-4 text-violet-400" />
+            <h2 className="text-white font-semibold">Invite to Workspace</h2>
+          </div>
+          <button onClick={onClose} className="text-white/40 hover:text-white/70 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {!link ? (
+          <div className="space-y-4">
+            {/* Role */}
+            <div>
+              <label className="block text-white/50 text-xs uppercase tracking-wide mb-1.5">Role</label>
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                className="input-base"
+              >
+                <option value="lead">Lead</option>
+                <option value="builder">Builder</option>
+                <option value="reviewer">Reviewer</option>
+              </select>
+            </div>
+
+            {/* Max Uses */}
+            <div>
+              <label className="block text-white/50 text-xs uppercase tracking-wide mb-1.5">Max Uses</label>
+              <select
+                value={maxUses === undefined ? '' : String(maxUses)}
+                onChange={(e) => setMaxUses(e.target.value === '' ? undefined : Number(e.target.value))}
+                className="input-base"
+              >
+                <option value="">Unlimited</option>
+                <option value="1">1 use</option>
+                <option value="5">5 uses</option>
+                <option value="10">10 uses</option>
+              </select>
+            </div>
+
+            {/* Expiry */}
+            <div>
+              <label className="block text-white/50 text-xs uppercase tracking-wide mb-1.5">Expires</label>
+              <select
+                value={expiresHours === undefined ? '' : String(expiresHours)}
+                onChange={(e) => setExpiresHours(e.target.value === '' ? undefined : Number(e.target.value))}
+                className="input-base"
+              >
+                <option value="">Never</option>
+                <option value="1">1 hour</option>
+                <option value="24">24 hours</option>
+                <option value="168">7 days</option>
+              </select>
+            </div>
+
+            {error && <p className="text-red-400 text-sm">{error}</p>}
+
+            <button
+              onClick={handleGenerate}
+              disabled={loading}
+              className="btn-primary w-full"
+            >
+              {loading ? 'Generating...' : 'Generate Invite Link'}
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-white/50 text-sm">Share this link to invite someone to the workspace:</p>
+            <div className="flex items-center gap-2">
+              <input
+                readOnly
+                value={link}
+                className="input-base flex-1 text-xs font-mono"
+              />
+              <button
+                onClick={handleCopy}
+                className="btn-ghost border border-white/10 flex-shrink-0 flex items-center gap-1.5"
+              >
+                {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                {copied ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <a
+                href={`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent('Join my Forge workspace!')}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-ghost border border-white/10 flex items-center gap-1.5 text-sm"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                Share
+              </a>
+              <button
+                onClick={() => { setLink(null); setRole('builder'); setMaxUses(undefined); setExpiresHours(undefined); }}
+                className="btn-ghost text-sm"
+              >
+                New Link
+              </button>
+              <button onClick={onClose} className="btn-ghost text-sm ml-auto">Done</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function WorkspaceOverview() {
   const params = useParams();
@@ -27,6 +175,7 @@ export default function WorkspaceOverview() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [merges, setMerges] = useState<Merge[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showInvite, setShowInvite] = useState(false);
 
   async function loadAll() {
     try {
@@ -81,12 +230,25 @@ export default function WorkspaceOverview() {
 
   return (
     <div className="p-6 max-w-4xl">
+      {showInvite && (
+        <InviteModal workspaceId={workspaceId} onClose={() => setShowInvite(false)} />
+      )}
+
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white">{workspace?.name || 'Workspace'}</h1>
-        {workspace?.description && (
-          <p className="text-white/40 text-sm mt-1">{workspace.description}</p>
-        )}
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">{workspace?.name || 'Workspace'}</h1>
+          {workspace?.description && (
+            <p className="text-white/40 text-sm mt-1">{workspace.description}</p>
+          )}
+        </div>
+        <button
+          onClick={() => setShowInvite(true)}
+          className="btn-ghost border border-white/10 flex items-center gap-2 text-sm"
+        >
+          <Link2 className="w-4 h-4 text-violet-400" />
+          Invite
+        </button>
       </div>
 
       {/* Stats cards */}

@@ -7,10 +7,11 @@ import { hasApiKey, getAgentInfo, clearApiKey } from '@/lib/api';
 import { wsClient } from '@/lib/ws';
 import {
   Zap, CheckSquare, FolderOpen, MessageSquare, Users, GitMerge,
-  BookOpen, LogOut, Menu, X, Wifi, WifiOff, Home
+  BookOpen, LogOut, Menu, X, Wifi, WifiOff, Home, MessagesSquare
 } from 'lucide-react';
 
 const NAV = [
+  { href: '/chat', label: 'Chat', icon: MessagesSquare },
   { href: '', label: 'Overview', icon: Home },
   { href: '/tasks', label: 'Tasks', icon: CheckSquare },
   { href: '/files', label: 'Files', icon: FolderOpen },
@@ -61,6 +62,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
   function isActive(href: string) {
     const full = base + href;
     if (href === '') return pathname === base;
+    if (href === '/chat') return pathname === full || pathname.startsWith(full + '/');
     return pathname.startsWith(full);
   }
 
