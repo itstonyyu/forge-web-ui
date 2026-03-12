@@ -157,6 +157,14 @@ export const getContributionSummary = (wsId: string) =>
 export const listGoals = (wsId: string) =>
   apiFetch(`/api/workspaces/${wsId}/goals`, {}, wsId);
 
+// Humans
+export const createHuman = (wsId: string, data: { name: string; email?: string }) =>
+  apiFetch(`/api/workspaces/${wsId}/humans`, { method: 'POST', body: JSON.stringify(data) }, wsId);
+export const listHumans = (wsId: string) =>
+  apiFetch(`/api/workspaces/${wsId}/humans`, {}, wsId);
+export const getHuman = (wsId: string, humanId: string) =>
+  apiFetch(`/api/workspaces/${wsId}/humans/${humanId}`, {}, wsId);
+
 // Auth helpers
 export function saveApiKey(workspaceId: string, apiKey: string) {
   localStorage.setItem(`forge_key_${workspaceId}`, apiKey);

@@ -5,14 +5,14 @@ import { useParams } from 'next/navigation';
 import {
   listAgents, getStatuses, getAgentScorecard,
   createInvite, getCapabilityCard, searchCapabilities,
-  getAgentHealth, getContributions
+  getAgentHealth, getContributions, listHumans
 } from '@/lib/api';
 import { wsClient } from '@/lib/ws';
 import { formatRelative } from '@/lib/utils';
 import CapabilityCard, { CapabilityCardData } from '@/components/CapabilityCard';
 import {
   Users, Cpu, Link2, Copy, Check, X, Share2, UserPlus, Plug, Search,
-  AlertTriangle, Zap
+  AlertTriangle, Zap, User
 } from 'lucide-react';
 
 /* ─── Types ─── */
@@ -27,6 +27,14 @@ interface Agent {
   joined_at?: string;
   trust_level?: string;
   zone?: string;
+}
+
+interface Human {
+  id: string;
+  name: string;
+  email?: string;
+  role: string;
+  joined_at?: string;
 }
 
 interface AgentStatus {
@@ -349,6 +357,7 @@ export default function TeamPage() {
   const workspaceId = params.id as string;
 
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [humans, setHumans] = useState<Human[]>([]);
   const [statuses, setStatuses] = useState<AgentStatus[]>([]);
   const [healthMap, setHealthMap] = useState<Record<string, HealthEntry>>({});
   const [loading, setLoading] = useState(true);
@@ -390,12 +399,14 @@ export default function TeamPage() {
 
   async function load() {
     try {
-      const [a, s, h] = await Promise.allSettled([
+      const [a, hm, s, h] = await Promise.allSettled([
         listAgents(workspaceId),
+        listHumans(workspaceId),
         getStatuses(workspaceId),
         getAgentHealth(workspaceId),
       ]);
       if (a.status === 'fulfilled') setAgents(Array.isArray(a.value) ? a.value : a.value?.agents || []);
+      if (hm.status === 'fulfilled') setHumans(Array.isArray(hm.value) ? hm.value : hm.value?.humans || []);
       if (s.status === 'fulfilled') setStatuses(Array.isArray(s.value) ? s.value : s.value?.statuses || []);
       if (h.status === 'fulfilled') {
         const healthList: HealthEntry[] = Array.isArray(h.value) ? h.value : h.value?.agents || [];
@@ -550,7 +561,7 @@ await agent.join({
         <div className="p-4 border-b border-white/[0.08]">
           <div className="flex items-center justify-between mb-3">
             <h1 className="text-lg font-bold text-white">Team</h1>
-            <span className="text-white/30 text-xs">{agents.length} members</span>
+            <span className="text-white/30 text-xs">{humans.length + agents.length} members</span>
           </div>
           <div className="relative mb-2">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30" />
