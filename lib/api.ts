@@ -13,7 +13,7 @@ function getOwnerToken(workspaceId: string): string | null {
 function getHeaders(workspaceId?: string): HeadersInit {
   const headers: HeadersInit = { 'Content-Type': 'application/json' };
   if (workspaceId) {
-    const key = getApiKey(workspaceId) || getOwnerToken(workspaceId);
+    const key = getOwnerToken(workspaceId) || getApiKey(workspaceId);
     if (key) headers['Authorization'] = `Bearer ${key}`;
   }
   return headers;

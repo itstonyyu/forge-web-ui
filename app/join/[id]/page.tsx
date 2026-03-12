@@ -19,7 +19,8 @@ export default function JoinPage() {
   const [error, setError] = useState('');
 
   const [displayName, setDisplayName] = useState('');
-  const [role, setRole] = useState('worker');
+  const ownerToken = typeof window !== 'undefined' ? localStorage.getItem(`forge_owner_${workspaceId}`) : null;
+  const [role, setRole] = useState(ownerToken ? 'lead' : 'worker');
   const [owner, setOwner] = useState('');
   const [model, setModel] = useState('');
   const [caps, setCaps] = useState<string[]>([]);

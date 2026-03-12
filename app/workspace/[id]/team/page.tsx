@@ -91,7 +91,7 @@ const ROLE_COLORS: Record<string, string> = {
   observer: 'text-gray-400 bg-gray-400/10 border-gray-400/20',
 };
 
-const INVITE_BASE = 'https://forge-web-ui.vercel.app/invite';
+const INVITE_BASE = 'https://web-alpha-lilac-58.vercel.app/invite';
 
 /* ─── Toast Component ─── */
 
