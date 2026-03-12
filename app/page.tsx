@@ -45,8 +45,12 @@ export default function HomePage() {
     if (!newName.trim()) return;
     setCreating(true);
     try {
-      const ws = await createWorkspace(newName.trim(), newDesc.trim() || undefined);
-      setWorkspaces((prev) => [ws?.workspace || ws, ...prev]);
+      const res = await createWorkspace(newName.trim(), newDesc.trim() || undefined);
+      const ws = res?.workspace || res;
+      if (res?.owner_token && ws?.id) {
+        localStorage.setItem(`forge_owner_${ws.id}`, res.owner_token);
+      }
+      setWorkspaces((prev) => [ws, ...prev]);
       setShowCreate(false);
       setNewName('');
       setNewDesc('');

@@ -5,10 +5,15 @@ function getApiKey(workspaceId: string): string | null {
   return localStorage.getItem(`forge_key_${workspaceId}`);
 }
 
+function getOwnerToken(workspaceId: string): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(`forge_owner_${workspaceId}`);
+}
+
 function getHeaders(workspaceId?: string): HeadersInit {
   const headers: HeadersInit = { 'Content-Type': 'application/json' };
   if (workspaceId) {
-    const key = getApiKey(workspaceId);
+    const key = getApiKey(workspaceId) || getOwnerToken(workspaceId);
     if (key) headers['Authorization'] = `Bearer ${key}`;
   }
   return headers;
@@ -30,13 +35,13 @@ async function apiFetch(path: string, options: RequestInit = {}, workspaceId?: s
 // Workspaces
 export const listWorkspaces = () => apiFetch('/api/workspaces');
 export const getWorkspace = (id: string) => apiFetch(`/api/workspaces/${id}`, {}, id);
-export const createWorkspace = (name: string, description?: string) =>
-  apiFetch('/api/workspaces', { method: 'POST', body: JSON.stringify({ name, description }) });
+export const createWorkspace = (name: string, description?: string, owner?: string) =>
+  apiFetch('/api/workspaces', { method: 'POST', body: JSON.stringify({ name, description, owner: owner || 'owner' }) });
 
 // Agents
 export const joinWorkspace = (id: string, data: {
   id: string; display_name: string; role: string; owner: string; model?: string; capabilities?: string[]; invite_token?: string;
-}) => apiFetch(`/api/workspaces/${id}/join`, { method: 'POST', body: JSON.stringify(data) });
+}) => apiFetch(`/api/workspaces/${id}/join`, { method: 'POST', body: JSON.stringify(data) }, id);
 export const leaveWorkspace = (id: string) =>
   apiFetch(`/api/workspaces/${id}/leave`, { method: 'POST' }, id);
 export const listAgents = (id: string) => apiFetch(`/api/workspaces/${id}/agents`, {}, id);
