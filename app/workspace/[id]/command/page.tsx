@@ -4,13 +4,13 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import {
   listMerges, listTasks, listEvents, getMessages, sendMessage,
-  voteMerge, updateTask, getAgentInfo
+  voteMerge, updateTask, claimTask, getAgentInfo
 } from '@/lib/api';
 import { wsClient } from '@/lib/ws';
 import { formatRelative, STATUS_COLORS } from '@/lib/utils';
 import {
   GitMerge, CheckSquare, AlertCircle, CheckCircle, XCircle,
-  Clock, Send, Activity
+  Clock, Send, Activity, Inbox, Target, MessageSquare, Hand
 } from 'lucide-react';
 
 /* ─── Types ─── */
@@ -98,6 +98,8 @@ export default function CommandPage() {
   const [loading, setLoading] = useState(true);
   const [votingId, setVotingId] = useState<string | null>(null);
   const [voteFeedback, setVoteFeedback] = useState('');
+  const [requestChangesId, setRequestChangesId] = useState<string | null>(null);
+  const [changesFeedback, setChangesFeedback] = useState('');
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -171,14 +173,22 @@ export default function CommandPage() {
   /* ─── Actions ─── */
 
   async function handleVote(mergeId: string, status: 'approved' | 'rejected') {
-    await voteMerge(workspaceId, mergeId, { status, feedback: voteFeedback.trim() || undefined });
+    const feedback = (requestChangesId === mergeId ? changesFeedback : voteFeedback).trim() || undefined;
+    await voteMerge(workspaceId, mergeId, { status, feedback });
     setVotingId(null);
     setVoteFeedback('');
+    setRequestChangesId(null);
+    setChangesFeedback('');
     await loadData();
   }
 
   async function handleClaimTask(taskId: string) {
-    await updateTask(workspaceId, taskId, { status: 'claimed' });
+    try {
+      await claimTask(workspaceId, taskId);
+    } catch {
+      // Fallback to status update if claim endpoint doesn't exist
+      await updateTask(workspaceId, taskId, { status: 'claimed' });
+    }
     await loadData();
   }
 
@@ -244,7 +254,7 @@ export default function CommandPage() {
 
         {actionItems.length === 0 ? (
           <div className="card p-8 text-center">
-            <p className="text-green-400 text-lg mb-1">✅</p>
+            <Inbox className="w-10 h-10 text-green-400/30 mx-auto mb-2" />
             <p className="text-green-400/80 text-sm font-medium">Nothing needs your attention</p>
             <p className="text-white/25 text-xs mt-1">All merges reviewed, all tasks claimed</p>
           </div>
@@ -314,6 +324,41 @@ export default function CommandPage() {
                               </button>
                             </div>
                           </div>
+                        ) : requestChangesId === merge.id ? (
+                          <div className="mt-3 space-y-2 border-t border-white/[0.06] pt-3">
+                            <div className="flex items-center gap-1.5 text-xs text-yellow-400/80">
+                              <MessageSquare className="w-3.5 h-3.5" />
+                              <span className="font-medium">Request Changes</span>
+                            </div>
+                            <textarea
+                              value={changesFeedback}
+                              onChange={(e) => setChangesFeedback(e.target.value)}
+                              placeholder="Describe the changes needed..."
+                              className="input-base text-sm resize-none"
+                              rows={3}
+                              autoFocus
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                onClick={async () => {
+                                  await handleVote(merge.id, 'rejected');
+                                  setRequestChangesId(null);
+                                  setChangesFeedback('');
+                                }}
+                                disabled={!changesFeedback.trim()}
+                                className="btn-danger flex items-center gap-1.5 text-xs disabled:opacity-40"
+                              >
+                                <XCircle className="w-3.5 h-3.5" />
+                                Submit Changes Request
+                              </button>
+                              <button
+                                onClick={() => { setRequestChangesId(null); setChangesFeedback(''); }}
+                                className="btn-ghost text-xs"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
                         ) : (
                           <div className="flex gap-2 mt-2">
                             <button
@@ -329,6 +374,17 @@ export default function CommandPage() {
                             >
                               <XCircle className="w-3.5 h-3.5" />
                               Reject
+                            </button>
+                            <button
+                              onClick={() => {
+                                setRequestChangesId(merge.id);
+                                setChangesFeedback('');
+                                setVoteFeedback('');
+                              }}
+                              className="btn-ghost border border-yellow-500/20 text-yellow-400/70 text-xs flex items-center gap-1.5"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" />
+                              Request Changes
                             </button>
                             <button
                               onClick={() => setVotingId(merge.id)}
@@ -373,8 +429,9 @@ export default function CommandPage() {
                       )}
                       <button
                         onClick={() => handleClaimTask(task.id)}
-                        className="btn-primary text-xs py-1.5 mt-2"
+                        className="btn-primary text-xs py-1.5 mt-2 flex items-center gap-1.5"
                       >
+                        <Hand className="w-3.5 h-3.5" />
                         Claim Task
                       </button>
                     </div>
@@ -415,7 +472,11 @@ export default function CommandPage() {
 
         {/* Kanban columns */}
         {totalTasks === 0 ? (
-          <div className="card p-8 text-center text-white/30 text-sm">No tasks yet</div>
+          <div className="card p-8 text-center">
+            <Target className="w-10 h-10 text-white/10 mx-auto mb-2" />
+            <p className="text-white/30 text-sm">No tasks yet</p>
+            <p className="text-white/20 text-xs mt-1">Create tasks to track progress</p>
+          </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             {kanbanColumns.map(status => {
@@ -468,8 +529,9 @@ export default function CommandPage() {
           <div className="max-h-96 overflow-y-auto p-4 space-y-3">
             {feedItems.length === 0 ? (
               <div className="text-center py-8">
-                <p className="text-white/20 text-3xl mb-2">💬</p>
+                <Activity className="w-10 h-10 text-white/10 mx-auto mb-2" />
                 <p className="text-white/30 text-sm">No activity yet</p>
+                <p className="text-white/20 text-xs mt-1">Events and messages will appear here</p>
               </div>
             ) : (
               feedItems.map((item, i) => {

@@ -4,12 +4,13 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import {
   listAgents, getStatuses, getAgentScorecard,
-  createInvite
+  createInvite, getCapabilityCard, searchCapabilities
 } from '@/lib/api';
 import { wsClient } from '@/lib/ws';
 import { formatRelative } from '@/lib/utils';
+import CapabilityCard, { CapabilityCardData } from '@/components/CapabilityCard';
 import {
-  Users, Cpu, Link2, Copy, Check, X, Share2, UserPlus, Plug
+  Users, Cpu, Link2, Copy, Check, X, Share2, UserPlus, Plug, Search
 } from 'lucide-react';
 
 /* ─── Types ─── */
@@ -199,6 +200,10 @@ export default function TeamPage() {
   const [scorecardLoading, setScorecardLoading] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [showConnect, setShowConnect] = useState(false);
+  const [capCard, setCapCard] = useState<CapabilityCardData | null>(null);
+  const [capCardLoading, setCapCardLoading] = useState(false);
+  const [capSearch, setCapSearch] = useState('');
+  const [capSearchResults, setCapSearchResults] = useState<string[] | null>(null);
 
   async function load() {
     try {
@@ -210,6 +215,35 @@ export default function TeamPage() {
       if (s.status === 'fulfilled') setStatuses(Array.isArray(s.value) ? s.value : s.value?.statuses || []);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadCapabilityCard(agentId: string) {
+    setCapCardLoading(true);
+    try {
+      const data = await getCapabilityCard(workspaceId, agentId);
+      setCapCard(data);
+    } catch {
+      setCapCard(null);
+    } finally {
+      setCapCardLoading(false);
+    }
+  }
+
+  async function handleCapSearch(query: string) {
+    setCapSearch(query);
+    if (!query.trim()) {
+      setCapSearchResults(null);
+      return;
+    }
+    try {
+      const res = await searchCapabilities(workspaceId, query);
+      const ids: string[] = Array.isArray(res)
+        ? res.map((r: { agent_id?: string; id?: string }) => r.agent_id || r.id || '')
+        : res?.agent_ids || [];
+      setCapSearchResults(ids);
+    } catch {
+      setCapSearchResults(null);
     }
   }
 
@@ -236,8 +270,10 @@ export default function TeamPage() {
   useEffect(() => {
     if (selectedAgent) {
       loadScorecard(selectedAgent);
+      loadCapabilityCard(selectedAgent);
     } else {
       setScorecard(null);
+      setCapCard(null);
     }
   }, [selectedAgent]);
 
@@ -256,6 +292,9 @@ export default function TeamPage() {
     return TRUST_COLORS[level] || TRUST_COLORS.unverified;
   }
 
+  const filteredAgents = capSearchResults
+    ? agents.filter(a => capSearchResults.includes(a.id))
+    : agents;
   const selected = agents.find(a => a.id === selectedAgent);
 
   return (
@@ -316,6 +355,16 @@ await agent.join({
             <h1 className="text-lg font-bold text-white">Team</h1>
             <span className="text-white/30 text-xs">{agents.length} members</span>
           </div>
+          <div className="relative mb-2">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30" />
+            <input
+              type="text"
+              value={capSearch}
+              onChange={(e) => handleCapSearch(e.target.value)}
+              placeholder="Search by capability..."
+              className="input-base w-full pl-8 text-xs"
+            />
+          </div>
           <div className="flex gap-2">
             <button
               onClick={() => setShowInvite(true)}
@@ -337,7 +386,7 @@ await agent.join({
         <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
           {loading ? (
             [...Array(4)].map((_, i) => <div key={i} className="card p-4 animate-pulse h-20" />)
-          ) : agents.length === 0 ? (
+          ) : filteredAgents.length === 0 ? (
             <div className="text-center py-12">
               <Users className="w-12 h-12 text-white/15 mx-auto mb-3" />
               <p className="text-white/30 text-sm">No team members yet</p>
@@ -346,7 +395,7 @@ await agent.join({
               </button>
             </div>
           ) : (
-            agents.map(agent => {
+            filteredAgents.map(agent => {
               const status = getStatus(agent.id);
               const online = isOnline(agent.id);
               const trust = getTrust(agent);
@@ -444,6 +493,15 @@ await agent.join({
                 </div>
               </div>
             )}
+
+            {/* Capability Card */}
+            <div className="mb-6">
+              {capCardLoading ? (
+                <div className="card p-4 animate-pulse h-32" />
+              ) : (
+                <CapabilityCard data={capCard} />
+              )}
+            </div>
 
             {/* Model */}
             {selected.model && (

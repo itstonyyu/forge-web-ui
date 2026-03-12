@@ -3,10 +3,10 @@
 import { useEffect, useState } from 'react';
 import { useRouter, useParams, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { hasApiKey, getAgentInfo, clearApiKey } from '@/lib/api';
+import { hasApiKey, getAgentInfo, clearApiKey, listMerges, listTasks } from '@/lib/api';
 import { wsClient } from '@/lib/ws';
 import {
-  Zap, LogOut, Menu, Wifi, WifiOff, LayoutDashboard, Users, Settings
+  Zap, LogOut, Menu, Wifi, WifiOff, LayoutDashboard, Users, Settings, Bell
 } from 'lucide-react';
 
 const NAV = [
@@ -24,6 +24,28 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
   const [agent, setAgent] = useState<Record<string, unknown> | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [bellCount, setBellCount] = useState(0);
+
+  async function loadBellCount() {
+    try {
+      const [mergesRes, tasksRes] = await Promise.allSettled([
+        listMerges(workspaceId),
+        listTasks(workspaceId),
+      ]);
+      let count = 0;
+      if (mergesRes.status === 'fulfilled') {
+        const list = Array.isArray(mergesRes.value) ? mergesRes.value : mergesRes.value?.merges || [];
+        count += list.filter((m: { status: string }) => m.status === 'pending').length;
+      }
+      if (tasksRes.status === 'fulfilled') {
+        const list = Array.isArray(tasksRes.value) ? tasksRes.value : tasksRes.value?.tasks || [];
+        count += list.filter((t: { status: string; priority: string }) =>
+          t.status === 'unclaimed' && ['critical', 'high'].includes(t.priority)
+        ).length;
+      }
+      setBellCount(count);
+    } catch {}
+  }
 
   useEffect(() => {
     if (!hasApiKey(workspaceId)) {
@@ -34,7 +56,13 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     setAgent(info);
 
     wsClient.connect(workspaceId);
-    const unsub = wsClient.subscribe(() => setWsConnected(wsClient.connected));
+    loadBellCount();
+    const unsub = wsClient.subscribe((event) => {
+      setWsConnected(wsClient.connected);
+      if (['task_created', 'task_updated', 'task_claimed', 'merge_requested', 'merge_voted'].includes(event.type)) {
+        loadBellCount();
+      }
+    });
     const interval = setInterval(() => setWsConnected(wsClient.connected), 2000);
 
     return () => {
@@ -68,10 +96,21 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
           </div>
           <span className="font-semibold text-white text-sm">Forge</span>
         </Link>
-        {/* WS status */}
-        <div className={`flex items-center gap-1.5 text-xs ${wsConnected ? 'text-green-400' : 'text-red-400/70'}`}>
-          {wsConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-          {wsConnected ? 'Live' : 'Reconnecting...'}
+        <div className="flex items-center justify-between">
+          {/* WS status */}
+          <div className={`flex items-center gap-1.5 text-xs ${wsConnected ? 'text-green-400' : 'text-red-400/70'}`}>
+            {wsConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+            {wsConnected ? 'Live' : 'Reconnecting...'}
+          </div>
+          {/* Notification bell */}
+          <Link href={base + '/command'} onClick={() => setMobileOpen(false)} className="relative p-1.5 rounded-lg hover:bg-white/5 transition-colors">
+            <Bell className="w-4 h-4 text-white/50" />
+            {bellCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-[10px] font-bold text-white">
+                {bellCount > 9 ? '9+' : bellCount}
+              </span>
+            )}
+          </Link>
         </div>
       </div>
 

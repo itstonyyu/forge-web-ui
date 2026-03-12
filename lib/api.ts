@@ -121,6 +121,20 @@ export const getInvite = (token: string) =>
 export const acceptInvite = (token: string, data: { id: string; display_name: string; owner?: string; model?: string; capabilities?: string[] }) =>
   apiFetch(`/api/invite/${token}/accept`, { method: 'POST', body: JSON.stringify(data) });
 
+// Capability cards
+export const getCapabilityCard = (wsId: string, agentId: string) =>
+  apiFetch(`/api/workspaces/${wsId}/agents/${agentId}/capability-card`, {}, wsId);
+export const listCapabilityCards = (wsId: string, capability?: string) => {
+  const q = capability ? `?capability=${encodeURIComponent(capability)}` : '';
+  return apiFetch(`/api/workspaces/${wsId}/capability-cards${q}`, {}, wsId);
+};
+export const searchCapabilities = (wsId: string, query: string) =>
+  apiFetch(`/api/workspaces/${wsId}/capabilities/search?q=${encodeURIComponent(query)}`, {}, wsId);
+
+// Task claim
+export const claimTask = (wsId: string, taskId: string) =>
+  apiFetch(`/api/workspaces/${wsId}/tasks/${taskId}/claim`, { method: 'POST' }, wsId);
+
 // Auth helpers
 export function saveApiKey(workspaceId: string, apiKey: string) {
   localStorage.setItem(`forge_key_${workspaceId}`, apiKey);
