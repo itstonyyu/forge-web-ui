@@ -101,6 +101,18 @@ export function createWebSocket(workspaceId: string): WebSocket {
   return new WebSocket(`${proto}://forge-server-production-059b.up.railway.app/ws?workspace=${workspaceId}`);
 }
 
+// Events
+export const listEvents = (id: string, limit = 50) =>
+  apiFetch(`/api/workspaces/${id}/events?limit=${limit}`, {}, id);
+
+// Settings
+export const updateSettings = (id: string, settings: Record<string, unknown>) =>
+  apiFetch(`/api/workspaces/${id}/settings`, { method: 'PATCH', body: JSON.stringify(settings) }, id);
+
+// Agent scorecard
+export const getAgentScorecard = (wsId: string, agentId: string) =>
+  apiFetch(`/api/workspaces/${wsId}/agents/${agentId}/scorecard`, {}, wsId);
+
 // Invites
 export const createInvite = (wsId: string, data: { role?: string; max_uses?: number; expires_hours?: number }) =>
   apiFetch(`/api/workspaces/${wsId}/invite`, { method: 'POST', body: JSON.stringify(data) }, wsId);

@@ -6,19 +6,13 @@ import Link from 'next/link';
 import { hasApiKey, getAgentInfo, clearApiKey } from '@/lib/api';
 import { wsClient } from '@/lib/ws';
 import {
-  Zap, CheckSquare, FolderOpen, MessageSquare, Users, GitMerge,
-  BookOpen, LogOut, Menu, X, Wifi, WifiOff, Home, MessagesSquare
+  Zap, LogOut, Menu, Wifi, WifiOff, LayoutDashboard, Users, Settings
 } from 'lucide-react';
 
 const NAV = [
-  { href: '/chat', label: 'Chat', icon: MessagesSquare },
-  { href: '', label: 'Overview', icon: Home },
-  { href: '/tasks', label: 'Tasks', icon: CheckSquare },
-  { href: '/files', label: 'Files', icon: FolderOpen },
-  { href: '/messages', label: 'Messages', icon: MessageSquare },
-  { href: '/agents', label: 'Agents', icon: Users },
-  { href: '/decisions', label: 'Decisions', icon: BookOpen },
-  { href: '/merges', label: 'Merges', icon: GitMerge },
+  { href: '/command', label: 'Command', icon: LayoutDashboard },
+  { href: '/team', label: 'Team', icon: Users },
+  { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
@@ -47,7 +41,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
       unsub();
       clearInterval(interval);
     };
-  }, [workspaceId]);
+  }, [workspaceId, router]);
 
   function handleLeave() {
     if (!confirm('Leave this workspace?')) return;
@@ -61,9 +55,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
 
   function isActive(href: string) {
     const full = base + href;
-    if (href === '') return pathname === base;
-    if (href === '/chat') return pathname === full || pathname.startsWith(full + '/');
-    return pathname.startsWith(full);
+    return pathname === full || pathname.startsWith(full + '/');
   }
 
   const SidebarContent = () => (
