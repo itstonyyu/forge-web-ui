@@ -135,6 +135,23 @@ export const searchCapabilities = (wsId: string, query: string) =>
 export const claimTask = (wsId: string, taskId: string) =>
   apiFetch(`/api/workspaces/${wsId}/tasks/${taskId}/claim`, { method: 'POST' }, wsId);
 
+// Agent health
+export const getAgentHealth = (wsId: string) =>
+  apiFetch(`/api/workspaces/${wsId}/agents/health`, {}, wsId);
+
+// Contributions
+export function getContributions(wsId: string, params?: { agent_id?: string; goal_id?: string }) {
+  const q = new URLSearchParams(params as Record<string, string>).toString();
+  return apiFetch(`/api/workspaces/${wsId}/contributions${q ? '?' + q : ''}`, {}, wsId);
+}
+
+export const getContributionSummary = (wsId: string) =>
+  apiFetch(`/api/workspaces/${wsId}/contributions/summary`, {}, wsId);
+
+// Goals
+export const listGoals = (wsId: string) =>
+  apiFetch(`/api/workspaces/${wsId}/goals`, {}, wsId);
+
 // Auth helpers
 export function saveApiKey(workspaceId: string, apiKey: string) {
   localStorage.setItem(`forge_key_${workspaceId}`, apiKey);

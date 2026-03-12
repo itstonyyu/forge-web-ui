@@ -64,4 +64,65 @@
   .badge {
     @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border;
   }
+
+  /* Fade-in animation for cards */
+  .fade-in {
+    animation: fadeIn 0.3s ease-out forwards;
+    opacity: 0;
+  }
+
+  /* Page transition */
+  .page-enter {
+    animation: pageEnter 0.2s ease-out forwards;
+  }
+
+  /* Toast animation */
+  .toast-enter {
+    animation: toastSlideIn 0.3s ease-out forwards;
+  }
+  .toast-exit {
+    animation: toastSlideOut 0.2s ease-in forwards;
+  }
+
+  /* Staggered fade-in: use style={animationDelay} */
+  .fade-in-stagger {
+    animation: fadeIn 0.35s ease-out forwards;
+    opacity: 0;
+  }
+
+  /* Border accent colors for action queue */
+  .border-accent-violet {
+    border-left: 3px solid rgb(139, 92, 246);
+  }
+  .border-accent-yellow {
+    border-left: 3px solid rgb(250, 204, 21);
+  }
+  .border-accent-red {
+    border-left: 3px solid rgb(248, 113, 113);
+  }
+
+  /* Skeleton shimmer */
+  .skeleton {
+    @apply bg-white/5 rounded-lg animate-pulse;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes toastSlideIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes toastSlideOut {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(8px) scale(0.96); }
 }

@@ -4,13 +4,15 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import {
   listAgents, getStatuses, getAgentScorecard,
-  createInvite, getCapabilityCard, searchCapabilities
+  createInvite, getCapabilityCard, searchCapabilities,
+  getAgentHealth, getContributions
 } from '@/lib/api';
 import { wsClient } from '@/lib/ws';
 import { formatRelative } from '@/lib/utils';
 import CapabilityCard, { CapabilityCardData } from '@/components/CapabilityCard';
 import {
-  Users, Cpu, Link2, Copy, Check, X, Share2, UserPlus, Plug, Search
+  Users, Cpu, Link2, Copy, Check, X, Share2, UserPlus, Plug, Search,
+  AlertTriangle, Zap
 } from 'lucide-react';
 
 /* ─── Types ─── */
@@ -32,6 +34,24 @@ interface AgentStatus {
   state: string;
   message?: string;
   updated_at: string;
+}
+
+interface HealthEntry {
+  agent_id: string;
+  last_heartbeat?: string;
+  consecutive_failures?: number;
+  current_task?: string;
+  status?: string;
+}
+
+interface ContributionData {
+  tasks_completed?: number;
+  merges_approved?: number;
+  reviews_given?: number;
+  total_tokens?: number;
+  total_cost_usd?: number;
+  total_time_seconds?: number;
+  approval_rate?: number;
 }
 
 interface Scorecard {
@@ -72,6 +92,40 @@ const ROLE_COLORS: Record<string, string> = {
 };
 
 const INVITE_BASE = 'https://forge-web-ui.vercel.app/invite';
+
+/* ─── Health helpers ─── */
+
+function getHealthStatus(agentId: string, healthMap: Record<string, HealthEntry>, statuses: AgentStatus[]): {
+  label: string; dotClass: string; isOnline: boolean;
+} {
+  const h = healthMap[agentId];
+  const s = statuses.find(st => st.agent_id === agentId);
+
+  // Use health data if available
+  const lastBeat = h?.last_heartbeat || s?.updated_at;
+  if (!lastBeat) return { label: 'offline', dotClass: 'bg-gray-600', isOnline: false };
+
+  const diffMs = Date.now() - new Date(lastBeat).getTime();
+  const diffMin = diffMs / 60000;
+
+  if (diffMin < 5) return { label: h?.current_task ? 'working' : 'online', dotClass: 'bg-green-400', isOnline: true };
+  if (diffMin < 30) return { label: 'idle', dotClass: 'bg-yellow-400', isOnline: false };
+  return { label: 'offline', dotClass: 'bg-gray-600', isOnline: false };
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const mins = Math.floor(seconds / 60);
+  const hrs = Math.floor(mins / 60);
+  if (hrs === 0) return `${mins}m`;
+  return `${hrs}h ${mins % 60}m`;
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
 
 /* ─── Invite Modal ─── */
 
@@ -186,6 +240,53 @@ function InviteModal({ workspaceId, onClose }: { workspaceId: string; onClose: (
   );
 }
 
+/* ─── Contribution Stats Component ─── */
+
+function ContributionStats({ data }: { data: ContributionData | null }) {
+  if (!data) return null;
+
+  const approvalRate = data.approval_rate ?? 0;
+  const stats = [
+    { label: 'Tasks completed', value: data.tasks_completed ?? 0 },
+    { label: 'Merges approved', value: data.merges_approved ?? 0 },
+    { label: 'Reviews given', value: data.reviews_given ?? 0 },
+    { label: 'Total tokens', value: data.total_tokens ? formatTokens(data.total_tokens) : '—' },
+    { label: 'Total cost', value: data.total_cost_usd != null ? `$${data.total_cost_usd.toFixed(2)}` : '—' },
+    { label: 'Total time', value: data.total_time_seconds ? formatDuration(data.total_time_seconds) : '—' },
+  ];
+
+  return (
+    <div className="fade-in">
+      <h3 className="text-sm font-medium text-white/60 uppercase tracking-wide mb-2">Contributions</h3>
+      <div className="card p-4 space-y-3">
+        {stats.map(({ label, value }) => (
+          <div key={label} className="flex items-center justify-between">
+            <span className="text-white/50 text-sm">{label}</span>
+            <span className="text-white/90 text-sm font-medium">{value}</span>
+          </div>
+        ))}
+        {/* Approval rate bar */}
+        <div className="pt-2 border-t border-white/[0.06]">
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-500"
+                style={{
+                  width: `${Math.min(approvalRate, 100)}%`,
+                  background: approvalRate >= 80 ? '#4ade80' : approvalRate >= 50 ? '#facc15' : '#f87171',
+                }}
+              />
+            </div>
+            <span className="text-white/50 text-xs whitespace-nowrap">
+              {Math.round(approvalRate)}% approve
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Main Component ─── */
 
 export default function TeamPage() {
@@ -194,6 +295,7 @@ export default function TeamPage() {
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [statuses, setStatuses] = useState<AgentStatus[]>([]);
+  const [healthMap, setHealthMap] = useState<Record<string, HealthEntry>>({});
   const [loading, setLoading] = useState(true);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [scorecard, setScorecard] = useState<Scorecard | null>(null);
@@ -204,15 +306,24 @@ export default function TeamPage() {
   const [capCardLoading, setCapCardLoading] = useState(false);
   const [capSearch, setCapSearch] = useState('');
   const [capSearchResults, setCapSearchResults] = useState<string[] | null>(null);
+  const [contributions, setContributions] = useState<ContributionData | null>(null);
+  const [contribLoading, setContribLoading] = useState(false);
 
   async function load() {
     try {
-      const [a, s] = await Promise.allSettled([
+      const [a, s, h] = await Promise.allSettled([
         listAgents(workspaceId),
         getStatuses(workspaceId),
+        getAgentHealth(workspaceId),
       ]);
       if (a.status === 'fulfilled') setAgents(Array.isArray(a.value) ? a.value : a.value?.agents || []);
       if (s.status === 'fulfilled') setStatuses(Array.isArray(s.value) ? s.value : s.value?.statuses || []);
+      if (h.status === 'fulfilled') {
+        const healthList: HealthEntry[] = Array.isArray(h.value) ? h.value : h.value?.agents || [];
+        const map: Record<string, HealthEntry> = {};
+        healthList.forEach(entry => { map[entry.agent_id] = entry; });
+        setHealthMap(map);
+      }
     } finally {
       setLoading(false);
     }
@@ -227,6 +338,18 @@ export default function TeamPage() {
       setCapCard(null);
     } finally {
       setCapCardLoading(false);
+    }
+  }
+
+  async function loadContributions(agentId: string) {
+    setContribLoading(true);
+    try {
+      const data = await getContributions(workspaceId, { agent_id: agentId });
+      setContributions(data);
+    } catch {
+      setContributions(null);
+    } finally {
+      setContribLoading(false);
     }
   }
 
@@ -262,30 +385,24 @@ export default function TeamPage() {
   useEffect(() => {
     load();
     const unsub = wsClient.subscribe((e) => {
-      if (['agent_joined', 'agent_left'].includes(e.type)) load();
+      if (['agent_joined', 'agent_left', 'heartbeat'].includes(e.type)) load();
     });
     return () => unsub();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId]);
 
   useEffect(() => {
     if (selectedAgent) {
       loadScorecard(selectedAgent);
       loadCapabilityCard(selectedAgent);
+      loadContributions(selectedAgent);
     } else {
       setScorecard(null);
       setCapCard(null);
+      setContributions(null);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAgent]);
-
-  function getStatus(agentId: string): AgentStatus | undefined {
-    return statuses.find(s => s.agent_id === agentId);
-  }
-
-  function isOnline(agentId: string): boolean {
-    const s = getStatus(agentId);
-    if (!s) return false;
-    return Date.now() - new Date(s.updated_at).getTime() < 5 * 60 * 1000;
-  }
 
   function getTrust(agent: Agent) {
     const level = agent.trust_level || 'unverified';
@@ -298,7 +415,7 @@ export default function TeamPage() {
   const selected = agents.find(a => a.id === selectedAgent);
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full page-enter">
       {showInvite && <InviteModal workspaceId={workspaceId} onClose={() => setShowInvite(false)} />}
 
       {/* Connect Agent modal */}
@@ -385,19 +502,23 @@ await agent.join({
 
         <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
           {loading ? (
-            [...Array(4)].map((_, i) => <div key={i} className="card p-4 animate-pulse h-20" />)
+            [...Array(4)].map((_, i) => <div key={i} className="skeleton h-20 mb-1.5" />)
           ) : filteredAgents.length === 0 ? (
-            <div className="text-center py-12">
-              <Users className="w-12 h-12 text-white/15 mx-auto mb-3" />
-              <p className="text-white/30 text-sm">No team members yet</p>
-              <button onClick={() => setShowInvite(true)} className="btn-primary mt-3 text-sm">
+            <div className="text-center py-16 fade-in">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
+                <Users className="w-8 h-8 text-violet-400/50" />
+              </div>
+              <p className="text-white/50 text-sm font-medium mb-1">No team members yet</p>
+              <p className="text-white/25 text-xs mb-4">Invite your first collaborator</p>
+              <button onClick={() => setShowInvite(true)} className="btn-primary text-sm">
+                <UserPlus className="w-3.5 h-3.5 inline mr-1.5" />
                 Invite someone
               </button>
             </div>
           ) : (
-            filteredAgents.map(agent => {
-              const status = getStatus(agent.id);
-              const online = isOnline(agent.id);
+            filteredAgents.map((agent, idx) => {
+              const health = getHealthStatus(agent.id, healthMap, statuses);
+              const hEntry = healthMap[agent.id];
               const trust = getTrust(agent);
               const isSelected = selectedAgent === agent.id;
 
@@ -405,22 +526,29 @@ await agent.join({
                 <button
                   key={agent.id}
                   onClick={() => setSelectedAgent(isSelected ? null : agent.id)}
-                  className={`w-full text-left card p-3 transition-all ${
+                  className={`w-full text-left card p-3 transition-all fade-in-stagger ${
                     isSelected
                       ? 'border-violet-500/30 bg-violet-500/5'
                       : 'hover:bg-white/[0.03] hover:border-white/[0.12]'
                   }`}
+                  style={{ animationDelay: `${idx * 50}ms` }}
                 >
                   <div className="flex items-start gap-3">
                     <div className="relative flex-shrink-0">
                       <div className="w-9 h-9 bg-white/10 rounded-xl flex items-center justify-center text-sm font-medium text-white/60">
                         {(agent.display_name || agent.id)[0].toUpperCase()}
                       </div>
-                      <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#0a0a0f] ${online ? 'bg-green-400' : 'bg-gray-600'}`} />
+                      <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#0a0a0f] ${health.dotClass}`} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 mb-0.5">
                         <span className="text-white/90 text-sm font-medium truncate">{agent.display_name}</span>
+                        {hEntry && (hEntry.consecutive_failures ?? 0) > 0 && (
+                          <span className="inline-flex items-center gap-0.5 text-xs text-yellow-400/80 bg-yellow-400/10 px-1.5 py-0.5 rounded-md border border-yellow-400/20">
+                            <AlertTriangle className="w-2.5 h-2.5" />
+                            {hEntry.consecutive_failures}
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className={`badge text-xs ${ROLE_COLORS[agent.role] || 'text-white/40 bg-white/5 border-white/10'}`}>
@@ -430,13 +558,20 @@ await agent.join({
                           {trust.label}
                         </span>
                       </div>
-                      {status && (
-                        <div className="flex items-center gap-1 mt-1">
-                          <span className={`text-xs ${online ? 'text-green-400' : 'text-white/25'}`}>
-                            {online ? status.state || 'online' : 'offline'}
+                      <div className="flex items-center gap-1 mt-1">
+                        <span className={`text-xs ${
+                          health.label === 'online' || health.label === 'working'
+                            ? 'text-green-400'
+                            : health.label === 'idle' ? 'text-yellow-400' : 'text-white/25'
+                        }`}>
+                          {health.label}
+                        </span>
+                        {hEntry?.current_task && (
+                          <span className="text-white/30 text-xs truncate ml-1">
+                            · {hEntry.current_task}
                           </span>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   </div>
                 </button>
@@ -456,14 +591,17 @@ await agent.join({
             </div>
           </div>
         ) : (
-          <div className="p-6 max-w-2xl">
+          <div className="p-6 max-w-2xl page-enter">
             {/* Agent header */}
             <div className="flex items-start gap-4 mb-6">
               <div className="relative">
                 <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center text-xl font-bold text-white/60">
                   {(selected.display_name || selected.id)[0].toUpperCase()}
                 </div>
-                <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-[#0a0a0f] ${isOnline(selected.id) ? 'bg-green-400' : 'bg-gray-600'}`} />
+                {(() => {
+                  const health = getHealthStatus(selected.id, healthMap, statuses);
+                  return <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-[#0a0a0f] ${health.dotClass}`} />;
+                })()}
               </div>
               <div>
                 <h2 className="text-xl font-bold text-white">{selected.display_name}</h2>
@@ -474,7 +612,33 @@ await agent.join({
                   <span className={`badge ${getTrust(selected).badge}`}>
                     {getTrust(selected).label}
                   </span>
+                  {(() => {
+                    const health = getHealthStatus(selected.id, healthMap, statuses);
+                    return (
+                      <span className={`badge text-xs ${
+                        health.isOnline
+                          ? 'text-green-400 bg-green-400/10 border-green-400/20'
+                          : health.label === 'idle'
+                          ? 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20'
+                          : 'text-gray-400 bg-gray-400/10 border-gray-400/20'
+                      }`}>
+                        {health.label}
+                      </span>
+                    );
+                  })()}
                 </div>
+                {healthMap[selected.id]?.current_task && (
+                  <div className="flex items-center gap-1.5 mt-2 text-xs text-violet-300/80">
+                    <Zap className="w-3 h-3" />
+                    Working on: {healthMap[selected.id].current_task}
+                  </div>
+                )}
+                {(healthMap[selected.id]?.consecutive_failures ?? 0) > 0 && (
+                  <div className="flex items-center gap-1.5 mt-1.5 text-xs text-yellow-400/80">
+                    <AlertTriangle className="w-3 h-3" />
+                    ⚠️ {healthMap[selected.id].consecutive_failures} consecutive failures
+                  </div>
+                )}
                 {selected.owner && (
                   <p className="text-white/30 text-xs mt-2">Owner: {selected.owner}</p>
                 )}
@@ -484,7 +648,7 @@ await agent.join({
 
             {/* Capabilities */}
             {selected.capabilities && selected.capabilities.length > 0 && (
-              <div className="mb-6">
+              <div className="mb-6 fade-in">
                 <h3 className="text-sm font-medium text-white/60 uppercase tracking-wide mb-2">Capabilities</h3>
                 <div className="flex flex-wrap gap-1.5">
                   {selected.capabilities.map(c => (
@@ -497,15 +661,24 @@ await agent.join({
             {/* Capability Card */}
             <div className="mb-6">
               {capCardLoading ? (
-                <div className="card p-4 animate-pulse h-32" />
+                <div className="skeleton h-32" />
               ) : (
                 <CapabilityCard data={capCard} />
               )}
             </div>
 
+            {/* Contributions */}
+            <div className="mb-6">
+              {contribLoading ? (
+                <div className="skeleton h-48" />
+              ) : (
+                <ContributionStats data={contributions} />
+              )}
+            </div>
+
             {/* Model */}
             {selected.model && (
-              <div className="mb-6">
+              <div className="mb-6 fade-in">
                 <h3 className="text-sm font-medium text-white/60 uppercase tracking-wide mb-2">Model</h3>
                 <span className="flex items-center gap-1.5 text-white/60 text-sm">
                   <Cpu className="w-3.5 h-3.5" />
@@ -515,10 +688,10 @@ await agent.join({
             )}
 
             {/* Scorecard */}
-            <div className="mb-6">
+            <div className="mb-6 fade-in" style={{ animationDelay: '100ms' }}>
               <h3 className="text-sm font-medium text-white/60 uppercase tracking-wide mb-2">Performance</h3>
               {scorecardLoading ? (
-                <div className="card p-4 animate-pulse h-24" />
+                <div className="skeleton h-24" />
               ) : scorecard ? (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div className="card p-3 text-center">
@@ -549,7 +722,7 @@ await agent.join({
 
             {/* Recent tasks */}
             {scorecard?.recent_tasks && scorecard.recent_tasks.length > 0 && (
-              <div>
+              <div className="fade-in" style={{ animationDelay: '150ms' }}>
                 <h3 className="text-sm font-medium text-white/60 uppercase tracking-wide mb-2">Recent Tasks</h3>
                 <div className="space-y-1.5">
                   {scorecard.recent_tasks.map(task => (
