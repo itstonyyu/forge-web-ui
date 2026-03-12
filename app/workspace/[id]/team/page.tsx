@@ -93,24 +93,73 @@ const ROLE_COLORS: Record<string, string> = {
 
 const INVITE_BASE = 'https://forge-web-ui.vercel.app/invite';
 
+/* ─── Toast Component ─── */
+
+function Toast({ show, message }: { show: boolean; message: string }) {
+  return (
+    <div
+      className={`fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-lg
+        bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-medium
+        backdrop-blur-sm shadow-lg
+        ${show ? 'toast-enter' : 'toast-exit pointer-events-none'}`}
+      style={{ display: show ? 'flex' : 'none' }}
+    >
+      <Check className="w-4 h-4" />
+      {message}
+    </div>
+  );
+}
+
 /* ─── Health helpers ─── */
 
-function getHealthStatus(agentId: string, healthMap: Record<string, HealthEntry>, statuses: AgentStatus[]): {
-  label: string; dotClass: string; isOnline: boolean;
+function getHealthStatus(agentId: string, healthMap: Record<string, HealthEntry>, statuses: AgentStatus[], hasJoined: boolean): {
+  label: string; dotClass: string; isOnline: boolean; description: string;
 } {
   const h = healthMap[agentId];
   const s = statuses.find(st => st.agent_id === agentId);
 
-  // Use health data if available
   const lastBeat = h?.last_heartbeat || s?.updated_at;
-  if (!lastBeat) return { label: 'offline', dotClass: 'bg-gray-600', isOnline: false };
+  
+  // Never connected
+  if (!lastBeat) {
+    return { 
+      label: 'never connected', 
+      dotClass: 'bg-gray-600', 
+      isOnline: false,
+      description: 'Agent has not sent a heartbeat yet'
+    };
+  }
 
   const diffMs = Date.now() - new Date(lastBeat).getTime();
   const diffMin = diffMs / 60000;
 
-  if (diffMin < 5) return { label: h?.current_task ? 'working' : 'online', dotClass: 'bg-green-400', isOnline: true };
-  if (diffMin < 30) return { label: 'idle', dotClass: 'bg-yellow-400', isOnline: false };
-  return { label: 'offline', dotClass: 'bg-gray-600', isOnline: false };
+  // Online/working
+  if (diffMin < 5) {
+    return { 
+      label: h?.current_task ? 'working' : 'online', 
+      dotClass: 'bg-green-400', 
+      isOnline: true,
+      description: h?.current_task ? `Currently: ${h.current_task}` : 'Connected and ready'
+    };
+  }
+  
+  // Idle
+  if (diffMin < 30) {
+    return { 
+      label: 'idle', 
+      dotClass: 'bg-yellow-400', 
+      isOnline: false,
+      description: `Last seen ${Math.round(diffMin)} minutes ago`
+    };
+  }
+  
+  // Offline
+  return { 
+    label: 'offline', 
+    dotClass: 'bg-gray-600', 
+    isOnline: false,
+    description: `Last seen ${formatRelative(lastBeat)}`
+  };
 }
 
 function formatDuration(seconds: number): string {
@@ -218,6 +267,12 @@ function InviteModal({ workspaceId, onClose }: { workspaceId: string; onClose: (
                 {copied ? 'Copied!' : 'Copy'}
               </button>
             </div>
+            {copied && (
+              <p className="text-green-400 text-xs flex items-center gap-1.5">
+                <Check className="w-3 h-3" />
+                Copied to clipboard!
+              </p>
+            )}
             <div className="flex gap-2">
               <a
                 href={`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent('Join my Forge workspace!')}`}
@@ -308,6 +363,30 @@ export default function TeamPage() {
   const [capSearchResults, setCapSearchResults] = useState<string[] | null>(null);
   const [contributions, setContributions] = useState<ContributionData | null>(null);
   const [contribLoading, setContribLoading] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [quickInviteLink, setQuickInviteLink] = useState<string | null>(null);
+  const [quickInviteLoading, setQuickInviteLoading] = useState(false);
+
+  const showToast = (message: string) => {
+    setToast(message);
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  async function handleQuickInvite() {
+    setQuickInviteLoading(true);
+    try {
+      const result = await createInvite(workspaceId, { role: 'builder' });
+      const link = `${INVITE_BASE}/${result.token}`;
+      setQuickInviteLink(link);
+      await navigator.clipboard.writeText(link);
+      showToast('Invite link copied to clipboard!');
+      setTimeout(() => setQuickInviteLink(null), 5000);
+    } catch (e: unknown) {
+      showToast('Failed to create invite link');
+    } finally {
+      setQuickInviteLoading(false);
+    }
+  }
 
   async function load() {
     try {
@@ -416,6 +495,7 @@ export default function TeamPage() {
 
   return (
     <div className="flex h-full page-enter">
+      {toast && <Toast show={!!toast} message={toast} />}
       {showInvite && <InviteModal workspaceId={workspaceId} onClose={() => setShowInvite(false)} />}
 
       {/* Connect Agent modal */}
@@ -482,20 +562,38 @@ await agent.join({
               className="input-base w-full pl-8 text-xs"
             />
           </div>
-          <div className="flex gap-2">
+          
+          {/* Quick Invite Button */}
+          <div className="space-y-2">
+            <button
+              onClick={handleQuickInvite}
+              disabled={quickInviteLoading}
+              className="btn-primary w-full flex items-center justify-center gap-1.5 text-xs"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              {quickInviteLoading ? 'Generating...' : 'Quick Invite Agent'}
+            </button>
+            
+            {quickInviteLink && (
+              <div className="card p-2 bg-green-500/5 border-green-500/20 fade-in">
+                <p className="text-green-400/80 text-xs mb-1 flex items-center gap-1">
+                  <Check className="w-3 h-3" />
+                  Link copied!
+                </p>
+                <input
+                  readOnly
+                  value={quickInviteLink}
+                  className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs font-mono text-white/60"
+                />
+              </div>
+            )}
+            
             <button
               onClick={() => setShowInvite(true)}
-              className="btn-ghost border border-white/10 flex items-center gap-1.5 text-xs flex-1"
+              className="btn-ghost border border-white/10 w-full flex items-center justify-center gap-1.5 text-xs"
             >
-              <UserPlus className="w-3.5 h-3.5 text-violet-400" />
-              Invite
-            </button>
-            <button
-              onClick={() => setShowConnect(true)}
-              className="btn-ghost border border-white/10 flex items-center gap-1.5 text-xs flex-1"
-            >
-              <Plug className="w-3.5 h-3.5 text-violet-400" />
-              Connect Agent
+              <Link2 className="w-3.5 h-3.5" />
+              Custom Invite
             </button>
           </div>
         </div>
@@ -510,14 +608,14 @@ await agent.join({
               </div>
               <p className="text-white/50 text-sm font-medium mb-1">No team members yet</p>
               <p className="text-white/25 text-xs mb-4">Invite your first collaborator</p>
-              <button onClick={() => setShowInvite(true)} className="btn-primary text-sm">
+              <button onClick={handleQuickInvite} className="btn-primary text-sm">
                 <UserPlus className="w-3.5 h-3.5 inline mr-1.5" />
                 Invite someone
               </button>
             </div>
           ) : (
             filteredAgents.map((agent, idx) => {
-              const health = getHealthStatus(agent.id, healthMap, statuses);
+              const health = getHealthStatus(agent.id, healthMap, statuses, !!agent.joined_at);
               const hEntry = healthMap[agent.id];
               const trust = getTrust(agent);
               const isSelected = selectedAgent === agent.id;
@@ -532,6 +630,7 @@ await agent.join({
                       : 'hover:bg-white/[0.03] hover:border-white/[0.12]'
                   }`}
                   style={{ animationDelay: `${idx * 50}ms` }}
+                  title={health.description}
                 >
                   <div className="flex items-start gap-3">
                     <div className="relative flex-shrink-0">
@@ -562,7 +661,9 @@ await agent.join({
                         <span className={`text-xs ${
                           health.label === 'online' || health.label === 'working'
                             ? 'text-green-400'
-                            : health.label === 'idle' ? 'text-yellow-400' : 'text-white/25'
+                            : health.label === 'idle' ? 'text-yellow-400'
+                            : health.label === 'never connected' ? 'text-gray-500'
+                            : 'text-white/25'
                         }`}>
                           {health.label}
                         </span>
@@ -599,7 +700,7 @@ await agent.join({
                   {(selected.display_name || selected.id)[0].toUpperCase()}
                 </div>
                 {(() => {
-                  const health = getHealthStatus(selected.id, healthMap, statuses);
+                  const health = getHealthStatus(selected.id, healthMap, statuses, !!selected.joined_at);
                   return <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-[#0a0a0f] ${health.dotClass}`} />;
                 })()}
               </div>
@@ -613,15 +714,20 @@ await agent.join({
                     {getTrust(selected).label}
                   </span>
                   {(() => {
-                    const health = getHealthStatus(selected.id, healthMap, statuses);
+                    const health = getHealthStatus(selected.id, healthMap, statuses, !!selected.joined_at);
                     return (
-                      <span className={`badge text-xs ${
-                        health.isOnline
-                          ? 'text-green-400 bg-green-400/10 border-green-400/20'
-                          : health.label === 'idle'
-                          ? 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20'
-                          : 'text-gray-400 bg-gray-400/10 border-gray-400/20'
-                      }`}>
+                      <span 
+                        className={`badge text-xs ${
+                          health.isOnline
+                            ? 'text-green-400 bg-green-400/10 border-green-400/20'
+                            : health.label === 'idle'
+                            ? 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20'
+                            : health.label === 'never connected'
+                            ? 'text-gray-500 bg-gray-500/10 border-gray-500/20'
+                            : 'text-gray-400 bg-gray-400/10 border-gray-400/20'
+                        }`}
+                        title={health.description}
+                      >
                         {health.label}
                       </span>
                     );

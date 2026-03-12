@@ -4,15 +4,31 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import {
   listMerges, listTasks, listEvents, getMessages, sendMessage,
-  voteMerge, updateTask, claimTask, getAgentInfo, listGoals
+  voteMerge, updateTask, claimTask, getAgentInfo, listGoals, recordDecision
 } from '@/lib/api';
 import { wsClient } from '@/lib/ws';
 import { formatRelative, STATUS_COLORS } from '@/lib/utils';
 import {
   GitMerge, CheckSquare, AlertCircle, CheckCircle, XCircle,
   Clock, Send, Activity, Inbox, Target, MessageSquare, Hand,
-  ChevronDown, ChevronRight
+  ChevronDown, ChevronRight, Search, Filter, FileText, X, Check
 } from 'lucide-react';
+import {
+  DndContext,
+  DragEndEvent,
+  DragOverlay,
+  DragStartEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  closestCorners,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 /* ─── Types ─── */
 
@@ -101,6 +117,172 @@ function formatDuration(seconds: number): string {
   return `${hrs}h ${mins % 60}m`;
 }
 
+/* ─── Toast Component ─── */
+
+function Toast({ show, message, type = 'success' }: { show: boolean; message: string; type?: 'success' | 'error' }) {
+  const bgClass = type === 'success' 
+    ? 'bg-green-500/20 border-green-500/30 text-green-400'
+    : 'bg-red-500/20 border-red-500/30 text-red-400';
+
+  return (
+    <div
+      className={`fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-lg
+        ${bgClass} border text-sm font-medium backdrop-blur-sm shadow-lg
+        ${show ? 'toast-enter' : 'toast-exit pointer-events-none'}`}
+      style={{ display: show ? 'flex' : 'none' }}
+    >
+      {type === 'success' ? <Check className="w-4 h-4" /> : <X className="w-4 h-4" />}
+      {message}
+    </div>
+  );
+}
+
+/* ─── Decision Modal ─── */
+
+function DecisionModal({ workspaceId, onClose, onSuccess }: { workspaceId: string; onClose: () => void; onSuccess: () => void }) {
+  const [title, setTitle] = useState('');
+  const [decision, setDecision] = useState('');
+  const [rationale, setRationale] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit() {
+    if (!title.trim() || !decision.trim()) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await recordDecision(workspaceId, { title, decision, rationale });
+      onSuccess();
+      onClose();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to log decision');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative card p-6 w-full max-w-lg mx-4 bg-[#0d0d14] border border-white/[0.12]">
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4 text-violet-400" />
+            <h2 className="text-white font-semibold">Log Decision</h2>
+          </div>
+          <button onClick={onClose} className="text-white/40 hover:text-white/70 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-white/50 text-xs uppercase tracking-wide mb-1.5">Decision Title</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g., Use PostgreSQL for database"
+              className="input-base"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="block text-white/50 text-xs uppercase tracking-wide mb-1.5">Decision</label>
+            <textarea
+              value={decision}
+              onChange={(e) => setDecision(e.target.value)}
+              placeholder="What did you decide?"
+              className="input-base resize-none h-24"
+            />
+          </div>
+          <div>
+            <label className="block text-white/50 text-xs uppercase tracking-wide mb-1.5">Rationale (Optional)</label>
+            <textarea
+              value={rationale}
+              onChange={(e) => setRationale(e.target.value)}
+              placeholder="Why did you make this decision?"
+              className="input-base resize-none h-20"
+            />
+          </div>
+          {error && <p className="text-red-400 text-sm">{error}</p>}
+          <div className="flex gap-2">
+            <button
+              onClick={handleSubmit}
+              disabled={loading || !title.trim() || !decision.trim()}
+              className="btn-primary flex-1 disabled:opacity-40"
+            >
+              {loading ? 'Logging...' : 'Log Decision'}
+            </button>
+            <button onClick={onClose} className="btn-ghost border border-white/10">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Sortable Task Card ─── */
+
+function SortableTaskCard({ task, expanded, onToggle }: { task: Task; expanded: boolean; onToggle: () => void }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: task.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className="card p-3 cursor-move hover:bg-white/[0.05] transition-all group relative"
+    >
+      <div onClick={(e) => { e.stopPropagation(); onToggle(); }} className="cursor-pointer">
+        <p className="text-white/80 text-xs font-medium mb-1 pr-6">
+          {task.title}
+        </p>
+        {expanded && task.description && (
+          <p className="text-white/50 text-xs mt-2 whitespace-pre-wrap border-t border-white/[0.06] pt-2">
+            {task.description}
+          </p>
+        )}
+        <div className="flex items-center gap-2 mt-1.5">
+          {task.claimed_by && (
+            <span className="text-white/30 text-xs truncate">→ {task.claimed_by}</span>
+          )}
+          <span className={`text-xs ml-auto ${
+            task.priority === 'critical' ? 'text-red-400' :
+            task.priority === 'high' ? 'text-yellow-400' :
+            task.priority === 'medium' ? 'text-blue-400' : 'text-gray-400'
+          }`}>
+            {task.priority}
+          </span>
+        </div>
+      </div>
+      {task.description && !expanded && (
+        <div className="absolute top-2 right-2 text-white/20 opacity-0 group-hover:opacity-100 transition-opacity">
+          <ChevronDown className="w-3 h-3" />
+        </div>
+      )}
+      {expanded && (
+        <div className="absolute top-2 right-2 text-white/20">
+          <ChevronRight className="w-3 h-3" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── Goal Card Component ─── */
 
 function GoalCard({ goal, allTasks }: { goal: Goal; allTasks: Task[] }) {
@@ -182,8 +364,32 @@ export default function CommandPage() {
   const [goals, setGoals] = useState<Goal[] | null>(null);
   const [feedLimit, setFeedLimit] = useState(INITIAL_FEED_COUNT);
 
+  // New state for UX improvements
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [filterPriority, setFilterPriority] = useState<string>('all');
+  const [filterAssignee, setFilterAssignee] = useState<string>('all');
+  const [showFilters, setShowFilters] = useState(false);
+  const [showDecisionModal, setShowDecisionModal] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    })
+  );
+
+  const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  }, []);
 
   const loadData = useCallback(async () => {
     try {
@@ -270,14 +476,17 @@ export default function CommandPage() {
     setVoteFeedback('');
     setRequestChangesId(null);
     setChangesFeedback('');
+    showToast(`Merge ${status}`, 'success');
     await loadData();
   }
 
   async function handleClaimTask(taskId: string) {
     try {
       await claimTask(workspaceId, taskId);
+      showToast('Task claimed', 'success');
     } catch {
       await updateTask(workspaceId, taskId, { status: 'claimed' });
+      showToast('Task claimed', 'success');
     }
     await loadData();
   }
@@ -303,6 +512,32 @@ export default function CommandPage() {
     }
   }
 
+  async function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    setActiveTaskId(null);
+
+    if (!over || active.id === over.id) return;
+
+    const taskId = active.id as string;
+    const newStatus = over.id as string;
+
+    // Optimistic update
+    setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
+
+    try {
+      await updateTask(workspaceId, taskId, { status: newStatus });
+      showToast(`Task moved to ${newStatus.replace('_', ' ')}`, 'success');
+      await loadData();
+    } catch (e) {
+      showToast('Failed to update task', 'error');
+      await loadData();
+    }
+  }
+
+  function handleDragStart(event: DragStartEvent) {
+    setActiveTaskId(event.active.id as string);
+  }
+
   /* ─── Derived data ─── */
 
   const actionItems = [
@@ -310,19 +545,44 @@ export default function CommandPage() {
     ...unclaimedTasks.map(t => ({ type: 'task' as const, data: t, priority: t.priority, at: t.created_at })),
   ].sort((a, b) => PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority));
 
+  // Filter tasks based on search and filters
+  const filteredTasks = allTasks.filter(task => {
+    if (searchQuery && !task.title.toLowerCase().includes(searchQuery.toLowerCase()) && 
+        !task.description?.toLowerCase().includes(searchQuery.toLowerCase())) {
+      return false;
+    }
+    if (filterStatus !== 'all' && task.status !== filterStatus) return false;
+    if (filterPriority !== 'all' && task.priority !== filterPriority) return false;
+    if (filterAssignee !== 'all') {
+      if (filterAssignee === 'unassigned' && task.claimed_by) return false;
+      if (filterAssignee !== 'unassigned' && task.claimed_by !== filterAssignee) return false;
+    }
+    return true;
+  });
+
   const tasksByStatus: Record<string, Task[]> = {};
-  allTasks.forEach(t => {
+  filteredTasks.forEach(t => {
     if (!tasksByStatus[t.status]) tasksByStatus[t.status] = [];
     tasksByStatus[t.status].push(t);
   });
 
-  const kanbanColumns = ['unclaimed', 'in_progress', 'claimed', 'done'];
+  const kanbanColumns = [
+    { id: 'unclaimed', label: 'TODO' },
+    { id: 'claimed', label: 'Claimed' },
+    { id: 'in_progress', label: 'In Progress' },
+    { id: 'done', label: 'Done' },
+  ];
+
   const totalTasks = allTasks.length;
   const inProgress = (tasksByStatus['in_progress'] || []).length + (tasksByStatus['claimed'] || []).length;
   const done = (tasksByStatus['done'] || []).length;
 
   const visibleFeed = feedItems.slice(-feedLimit);
   const hasMoreFeed = feedItems.length > feedLimit;
+
+  const assignees = Array.from(new Set(allTasks.map(t => t.claimed_by).filter(Boolean)));
+
+  const activeTask = activeTaskId ? allTasks.find(t => t.id === activeTaskId) : null;
 
   /* ─── Render ─── */
 
@@ -337,13 +597,34 @@ export default function CommandPage() {
   }
 
   return (
-    <div className="p-6 max-w-5xl space-y-8 page-enter">
+    <div className="p-6 max-w-7xl space-y-8 page-enter">
+      {toast && <Toast show={!!toast} message={toast.message} type={toast.type} />}
+      {showDecisionModal && (
+        <DecisionModal
+          workspaceId={workspaceId}
+          onClose={() => setShowDecisionModal(false)}
+          onSuccess={() => {
+            showToast('Decision logged successfully', 'success');
+            loadData();
+          }}
+        />
+      )}
+
       {/* ── Zone A: Action Queue ── */}
       <section>
-        <h2 className="text-sm font-medium text-white/60 uppercase tracking-wide mb-3 flex items-center gap-2">
-          <AlertCircle className="w-3.5 h-3.5" />
-          Action Queue
-        </h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-medium text-white/60 uppercase tracking-wide flex items-center gap-2">
+            <AlertCircle className="w-3.5 h-3.5" />
+            Action Queue
+          </h2>
+          <button
+            onClick={() => setShowDecisionModal(true)}
+            className="btn-ghost border border-white/10 text-xs flex items-center gap-1.5"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            Log Decision
+          </button>
+        </div>
 
         {actionItems.length === 0 ? (
           <div className="card p-8 text-center fade-in">
@@ -497,10 +778,70 @@ export default function CommandPage() {
 
       {/* ── Zone B: Goals & Progress ── */}
       <section>
-        <h2 className="text-sm font-medium text-white/60 uppercase tracking-wide mb-3 flex items-center gap-2">
-          <CheckSquare className="w-3.5 h-3.5" />
-          Goals &amp; Progress
-        </h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-medium text-white/60 uppercase tracking-wide flex items-center gap-2">
+            <CheckSquare className="w-3.5 h-3.5" />
+            Tasks &amp; Progress
+          </h2>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search tasks..."
+                className="input-base w-48 pl-8 text-xs"
+              />
+            </div>
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`btn-ghost border border-white/10 text-xs flex items-center gap-1.5 ${
+                showFilters ? 'bg-white/5' : ''
+              }`}
+            >
+              <Filter className="w-3.5 h-3.5" />
+              Filters
+            </button>
+          </div>
+        </div>
+
+        {showFilters && (
+          <div className="card p-4 mb-4 fade-in">
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-white/50 text-xs uppercase tracking-wide mb-1.5">Status</label>
+                <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="input-base text-xs">
+                  <option value="all">All</option>
+                  <option value="unclaimed">TODO</option>
+                  <option value="claimed">Claimed</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="done">Done</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-white/50 text-xs uppercase tracking-wide mb-1.5">Priority</label>
+                <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)} className="input-base text-xs">
+                  <option value="all">All</option>
+                  <option value="critical">Critical</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-white/50 text-xs uppercase tracking-wide mb-1.5">Assignee</label>
+                <select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)} className="input-base text-xs">
+                  <option value="all">All</option>
+                  <option value="unassigned">Unassigned</option>
+                  {assignees.map(a => (
+                    <option key={a} value={a}>{a}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Summary bar */}
         <div className="flex flex-wrap gap-3 mb-4">
@@ -520,55 +861,82 @@ export default function CommandPage() {
 
         {/* Goals view (if goals exist) */}
         {goals && goals.length > 0 ? (
-          <div className="space-y-2">
+          <div className="space-y-2 mb-6">
             {goals.map(goal => (
               <GoalCard key={goal.id} goal={goal} allTasks={allTasks} />
             ))}
           </div>
-        ) : totalTasks === 0 ? (
+        ) : null}
+
+        {/* Drag-and-drop Kanban */}
+        {totalTasks === 0 ? (
           <div className="card p-8 text-center fade-in">
             <Target className="w-10 h-10 text-white/10 mx-auto mb-2" />
             <p className="text-white/30 text-sm">No tasks yet</p>
             <p className="text-white/20 text-xs mt-1">Create tasks to track progress</p>
           </div>
         ) : (
-          /* Kanban columns fallback */
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            {kanbanColumns.map(status => {
-              const tasks = tasksByStatus[status] || [];
-              const label = status.replace('_', ' ');
-              return (
-                <div key={status} className="space-y-2">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={`badge text-xs ${STATUS_COLORS[status] || 'text-white/40 bg-white/5 border-white/10'}`}>
-                      {label}
-                    </span>
-                    <span className="text-white/25 text-xs">{tasks.length}</span>
-                  </div>
-                  {tasks.map((task, idx) => (
-                    <div key={task.id} className="card p-3 fade-in-stagger" style={{ animationDelay: `${idx * 40}ms` }}>
-                      <p className="text-white/80 text-xs font-medium mb-1 truncate">{task.title}</p>
-                      <div className="flex items-center gap-2">
-                        {task.claimed_by && (
-                          <span className="text-white/30 text-xs truncate">→ {task.claimed_by}</span>
-                        )}
-                        <span className={`text-xs ml-auto ${
-                          task.priority === 'critical' ? 'text-red-400' :
-                          task.priority === 'high' ? 'text-yellow-400' :
-                          task.priority === 'medium' ? 'text-blue-400' : 'text-gray-400'
-                        }`}>
-                          {task.priority}
-                        </span>
-                      </div>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCorners}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+          >
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              {kanbanColumns.map(column => {
+                const tasks = tasksByStatus[column.id] || [];
+                return (
+                  <div key={column.id} className="space-y-2">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`badge text-xs ${STATUS_COLORS[column.id] || 'text-white/40 bg-white/5 border-white/10'}`}>
+                        {column.label}
+                      </span>
+                      <span className="text-white/25 text-xs">{tasks.length}</span>
                     </div>
-                  ))}
-                  {tasks.length === 0 && (
-                    <div className="card p-3 text-center text-white/20 text-xs">—</div>
-                  )}
+                    <SortableContext items={tasks.map(t => t.id)} strategy={verticalListSortingStrategy} id={column.id}>
+                      <div className="space-y-1.5 min-h-[100px] p-2 rounded-lg border-2 border-dashed border-white/[0.04]">
+                        {tasks.map((task, idx) => (
+                          <SortableTaskCard
+                            key={task.id}
+                            task={task}
+                            expanded={expandedTaskIds.has(task.id)}
+                            onToggle={() => {
+                              setExpandedTaskIds(prev => {
+                                const next = new Set(prev);
+                                if (next.has(task.id)) next.delete(task.id);
+                                else next.add(task.id);
+                                return next;
+                              });
+                            }}
+                          />
+                        ))}
+                        {tasks.length === 0 && (
+                          <div className="card p-3 text-center text-white/20 text-xs">Drop here</div>
+                        )}
+                      </div>
+                    </SortableContext>
+                  </div>
+                );
+              })}
+            </div>
+
+            <DragOverlay>
+              {activeTask ? (
+                <div className="card p-3 cursor-move opacity-80 shadow-lg">
+                  <p className="text-white/80 text-xs font-medium mb-1">{activeTask.title}</p>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs ${
+                      activeTask.priority === 'critical' ? 'text-red-400' :
+                      activeTask.priority === 'high' ? 'text-yellow-400' :
+                      activeTask.priority === 'medium' ? 'text-blue-400' : 'text-gray-400'
+                    }`}>
+                      {activeTask.priority}
+                    </span>
+                  </div>
                 </div>
-              );
-            })}
-          </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
         )}
       </section>
 
