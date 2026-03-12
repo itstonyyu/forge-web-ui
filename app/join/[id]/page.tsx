@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter, useParams } from 'next/navigation';
+import { useRouter, useParams, useSearchParams } from 'next/navigation';
 import { joinWorkspace, getWorkspace, saveApiKey, saveAgentInfo } from '@/lib/api';
 import { ROLES, CAPABILITIES } from '@/lib/utils';
 import { Zap, ArrowLeft } from 'lucide-react';
@@ -9,7 +9,9 @@ import { Zap, ArrowLeft } from 'lucide-react';
 export default function JoinPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const workspaceId = params.id as string;
+  const inviteToken = searchParams.get('token') || searchParams.get('invite_token') || '';
 
   const [workspace, setWorkspace] = useState<{ name: string; description?: string } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -63,6 +65,7 @@ export default function JoinPage() {
         owner: owner.trim(),
         model: model.trim() || undefined,
         capabilities: caps.length > 0 ? caps : undefined,
+        invite_token: inviteToken || undefined,
       });
       saveApiKey(workspaceId, res.api_key);
       saveAgentInfo(workspaceId, { ...res.agent, agentId });

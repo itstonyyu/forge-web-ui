@@ -35,7 +35,7 @@ export const createWorkspace = (name: string, description?: string) =>
 
 // Agents
 export const joinWorkspace = (id: string, data: {
-  id: string; display_name: string; role: string; owner: string; model?: string; capabilities?: string[];
+  id: string; display_name: string; role: string; owner: string; model?: string; capabilities?: string[]; invite_token?: string;
 }) => apiFetch(`/api/workspaces/${id}/join`, { method: 'POST', body: JSON.stringify(data) });
 export const leaveWorkspace = (id: string) =>
   apiFetch(`/api/workspaces/${id}/leave`, { method: 'POST' }, id);
