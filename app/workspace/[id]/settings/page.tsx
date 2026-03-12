@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import {
   getWorkspace, updateSettings, createInvite
 } from '@/lib/api';
 import {
-  Settings, Archive, GitMerge, Bell, Link2, Copy, Check, X, Save, Share2
+  Settings, Archive, GitMerge, Bell, Link2, Copy, Check, X, Save, Share2,
+  AlertTriangle
 } from 'lucide-react';
 
 const INVITE_BASE = 'https://forge-web-ui.vercel.app/invite';
@@ -22,6 +23,72 @@ interface Workspace {
     require_human_approval?: boolean;
     auto_merge_on_pass?: boolean;
   };
+}
+
+/* ─── Toast ─── */
+
+function SavedToast({ show, message }: { show: boolean; message: string }) {
+  return (
+    <div
+      className={`fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-lg
+        bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-medium
+        backdrop-blur-sm shadow-lg
+        ${show ? 'toast-enter' : 'toast-exit pointer-events-none'}`}
+      style={{ display: show ? 'flex' : 'none' }}
+    >
+      <Check className="w-4 h-4" />
+      {message}
+    </div>
+  );
+}
+
+/* ─── Confirmation Dialog ─── */
+
+function ConfirmDialog({
+  open,
+  onClose,
+  onConfirm,
+  title,
+  description,
+  confirmLabel = 'Confirm',
+  danger = false,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  danger?: boolean;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative card p-6 w-full max-w-sm mx-4 bg-[#0d0d14] border border-white/[0.12]">
+        <div className="flex items-center gap-3 mb-4">
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+            danger ? 'bg-red-500/15 border border-red-500/20' : 'bg-violet-500/15 border border-violet-500/20'
+          }`}>
+            <AlertTriangle className={`w-5 h-5 ${danger ? 'text-red-400' : 'text-violet-400'}`} />
+          </div>
+          <div>
+            <h3 className="text-white font-semibold text-sm">{title}</h3>
+            <p className="text-white/40 text-xs mt-0.5">{description}</p>
+          </div>
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button onClick={onClose} className="btn-ghost border border-white/10 text-sm">Cancel</button>
+          <button
+            onClick={() => { onConfirm(); onClose(); }}
+            className={danger ? 'btn-danger text-sm' : 'btn-primary text-sm'}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* ─── Invite Modal ─── */
@@ -137,7 +204,7 @@ function InviteModal({ workspaceId, onClose }: { workspaceId: string; onClose: (
 
 /* ─── Toggle ─── */
 
-function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (val: boolean) => void; label: string }) {
   return (
     <label className="flex items-center justify-between py-3 cursor-pointer group">
       <span className="text-white/70 text-sm group-hover:text-white/90 transition-colors">{label}</span>
@@ -167,19 +234,24 @@ export default function SettingsPage() {
   const [, setWorkspace] = useState<Workspace | null>(null);
   const [loading, setLoading] = useState(true);
   const [showInvite, setShowInvite] = useState(false);
+  const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   // Editable fields
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [savingProject, setSavingProject] = useState(false);
-  const [projectSaved, setProjectSaved] = useState(false);
 
   // Merge policies
   const [requireDifferentAgent, setRequireDifferentAgent] = useState(false);
   const [requireHumanApproval, setRequireHumanApproval] = useState(false);
   const [autoMergeOnPass, setAutoMergeOnPass] = useState(false);
   const [savingPolicy, setSavingPolicy] = useState(false);
-  const [policySaved, setPolicySaved] = useState(false);
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2500);
+  }, []);
 
   async function loadWorkspace() {
     try {
@@ -200,14 +272,14 @@ export default function SettingsPage() {
 
   useEffect(() => {
     loadWorkspace();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId]);
 
   async function handleSaveProject() {
     setSavingProject(true);
     try {
       await updateSettings(workspaceId, { name, description });
-      setProjectSaved(true);
-      setTimeout(() => setProjectSaved(false), 2000);
+      showToast('Project settings saved');
     } finally {
       setSavingProject(false);
     }
@@ -223,8 +295,7 @@ export default function SettingsPage() {
           auto_merge_on_pass: autoMergeOnPass,
         },
       });
-      setPolicySaved(true);
-      setTimeout(() => setPolicySaved(false), 2000);
+      showToast('Merge policies saved');
     } finally {
       setSavingPolicy(false);
     }
@@ -234,15 +305,29 @@ export default function SettingsPage() {
     return (
       <div className="p-6 space-y-6">
         {[...Array(3)].map((_, i) => (
-          <div key={i} className="card p-5 animate-pulse h-32" />
+          <div key={i} className="skeleton h-32" />
         ))}
       </div>
     );
   }
 
   return (
-    <div className="p-6 max-w-2xl">
+    <div className="p-6 max-w-2xl page-enter">
       {showInvite && <InviteModal workspaceId={workspaceId} onClose={() => setShowInvite(false)} />}
+
+      <ConfirmDialog
+        open={showArchiveConfirm}
+        onClose={() => setShowArchiveConfirm(false)}
+        onConfirm={() => {
+          showToast('Archive functionality coming soon');
+        }}
+        title="Archive Workspace"
+        description="This will archive the workspace and all its data. This action may not be reversible."
+        confirmLabel="Archive"
+        danger
+      />
+
+      <SavedToast show={!!toast} message={toast || ''} />
 
       <h1 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
         <Settings className="w-5 h-5 text-violet-400" />
@@ -250,7 +335,7 @@ export default function SettingsPage() {
       </h1>
 
       {/* ── Project ── */}
-      <section className="card p-5 mb-6">
+      <section className="card p-5 mb-6 fade-in">
         <h2 className="text-sm font-medium text-white/60 uppercase tracking-wide mb-4">Project</h2>
         <div className="space-y-4">
           <div>
@@ -277,19 +362,11 @@ export default function SettingsPage() {
               disabled={savingProject}
               className="btn-primary flex items-center gap-1.5"
             >
-              {projectSaved ? (
-                <><Check className="w-4 h-4" /> Saved</>
-              ) : (
-                <><Save className="w-4 h-4" /> {savingProject ? 'Saving...' : 'Save'}</>
-              )}
+              <Save className="w-4 h-4" />
+              {savingProject ? 'Saving...' : 'Save'}
             </button>
             <button
-              onClick={() => {
-                if (confirm('Archive this workspace? This action may not be reversible.')) {
-                  // Archive placeholder
-                  alert('Archive functionality coming soon');
-                }
-              }}
+              onClick={() => setShowArchiveConfirm(true)}
               className="btn-danger flex items-center gap-1.5 ml-auto"
             >
               <Archive className="w-4 h-4" />
@@ -300,7 +377,7 @@ export default function SettingsPage() {
       </section>
 
       {/* ── Merge Policies ── */}
-      <section className="card p-5 mb-6">
+      <section className="card p-5 mb-6 fade-in" style={{ animationDelay: '50ms' }}>
         <h2 className="text-sm font-medium text-white/60 uppercase tracking-wide mb-2 flex items-center gap-2">
           <GitMerge className="w-3.5 h-3.5" />
           Merge Policies
@@ -327,16 +404,13 @@ export default function SettingsPage() {
           disabled={savingPolicy}
           className="btn-primary flex items-center gap-1.5 mt-4"
         >
-          {policySaved ? (
-            <><Check className="w-4 h-4" /> Saved</>
-          ) : (
-            <><Save className="w-4 h-4" /> {savingPolicy ? 'Saving...' : 'Save Policies'}</>
-          )}
+          <Save className="w-4 h-4" />
+          {savingPolicy ? 'Saving...' : 'Save Policies'}
         </button>
       </section>
 
       {/* ── Invites ── */}
-      <section className="card p-5 mb-6">
+      <section className="card p-5 mb-6 fade-in" style={{ animationDelay: '100ms' }}>
         <h2 className="text-sm font-medium text-white/60 uppercase tracking-wide mb-3 flex items-center gap-2">
           <Link2 className="w-3.5 h-3.5" />
           Invites
@@ -354,7 +428,7 @@ export default function SettingsPage() {
       </section>
 
       {/* ── Notifications ── */}
-      <section className="card p-5">
+      <section className="card p-5 fade-in" style={{ animationDelay: '150ms' }}>
         <h2 className="text-sm font-medium text-white/60 uppercase tracking-wide mb-3 flex items-center gap-2">
           <Bell className="w-3.5 h-3.5" />
           Notifications

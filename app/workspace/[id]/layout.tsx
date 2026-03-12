@@ -3,17 +3,11 @@
 import { useEffect, useState } from 'react';
 import { useRouter, useParams, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { hasApiKey, getAgentInfo, clearApiKey, listMerges, listTasks } from '@/lib/api';
+import { hasApiKey, getAgentInfo, clearApiKey, listMerges, listTasks, listAgents } from '@/lib/api';
 import { wsClient } from '@/lib/ws';
 import {
   Zap, LogOut, Menu, Wifi, WifiOff, LayoutDashboard, Users, Settings, Bell
 } from 'lucide-react';
-
-const NAV = [
-  { href: '/command', label: 'Command', icon: LayoutDashboard },
-  { href: '/team', label: 'Team', icon: Users },
-  { href: '/settings', label: 'Settings', icon: Settings },
-];
 
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const params = useParams();
@@ -25,6 +19,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
   const [wsConnected, setWsConnected] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [bellCount, setBellCount] = useState(0);
+  const [agentCount, setAgentCount] = useState<number | null>(null);
 
   async function loadBellCount() {
     try {
@@ -47,6 +42,14 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     } catch {}
   }
 
+  async function loadAgentCount() {
+    try {
+      const res = await listAgents(workspaceId);
+      const agents = Array.isArray(res) ? res : res?.agents || [];
+      setAgentCount(agents.length);
+    } catch {}
+  }
+
   useEffect(() => {
     if (!hasApiKey(workspaceId)) {
       router.replace(`/join/${workspaceId}`);
@@ -57,10 +60,14 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
 
     wsClient.connect(workspaceId);
     loadBellCount();
+    loadAgentCount();
     const unsub = wsClient.subscribe((event) => {
       setWsConnected(wsClient.connected);
       if (['task_created', 'task_updated', 'task_claimed', 'merge_requested', 'merge_voted'].includes(event.type)) {
         loadBellCount();
+      }
+      if (['agent_joined', 'agent_left'].includes(event.type)) {
+        loadAgentCount();
       }
     });
     const interval = setInterval(() => setWsConnected(wsClient.connected), 2000);
@@ -69,6 +76,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
       unsub();
       clearInterval(interval);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, router]);
 
   function handleLeave() {
@@ -85,6 +93,12 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     const full = base + href;
     return pathname === full || pathname.startsWith(full + '/');
   }
+
+  const NAV = [
+    { href: '/command', label: 'Command', icon: LayoutDashboard, badge: null },
+    { href: '/team', label: agentCount !== null ? `Team (${agentCount})` : 'Team', icon: Users, badge: null },
+    { href: '/settings', label: 'Settings', icon: Settings, badge: null },
+  ];
 
   const SidebarContent = () => (
     <>
